@@ -1,0 +1,55 @@
+{
+  "name": "fizziwig",
+  "displayName": "Fizziwig",
+  "description": "A free, open-source, local-first AI coding assistant powered by llama.cpp",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "chatParticipants": [
+      {
+        "id": "fizziwig.chat",
+        "name": "fizziwig",
+        "fullName": "Fizziwig",
+        "description": "Ask your local LLM about your code",
+        "isSticky": true
+      }
+    ],
+    "commands": [
+      {
+        "command": "fizziwig.applyLastEdit",
+        "title": "Fizziwig: Apply Last Suggested Edit"
+      }
+    ],
+    "configuration": {
+      "title": "Fizziwig",
+      "properties": {
+        "fizziwig.serverUrl": {
+          "type": "string",
+          "default": "http://localhost:8080/v1/chat/completions",
+          "description": "URL of your local llama-server (OpenAI-compatible) endpoint."
+        },
+        "fizziwig.modelName": {
+          "type": "string",
+          "default": "gemma-4b",
+          "description": "Model name to send in API requests (informational for most local servers)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.4.0"
+  }
+}
