@@ -62,6 +62,9 @@ cmake -B build && cmake --build build --config Release
 
 # run the server with a GGUF model (adjust memory, port, and model path)
 ./build/bin/llama-server -m /path/to/your-model.gguf -c 8192 --port 8080
+
+# Example
+../llama.cpp/build/bin/llama-server -m /Users/Shared/llama/models/gemma-4-E2B-it-UD-Q2_K_XL.gguf -c 8192 --port 8080
 ```
 
 This exposes an endpoint like `http://localhost:8080/v1/chat/completions`.
@@ -117,6 +120,13 @@ same API surface (for example, Ollama at `http://localhost:11434/v1/chat/complet
 - If the model produces partial or incorrect code, prefer asking follow-up
   questions in the chat or request a corrected patch rather than applying
   the first suggestion blindly.
+
+## Build the Extension
+
+```bash
+npm install -g @vscode/vsce
+vsce package
+```
 
 ## Roadmap / Possible improvements
 
