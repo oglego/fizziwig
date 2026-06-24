@@ -1,26 +1,13 @@
 import * as vscode from "vscode";
 import { streamChatCompletion, ChatMessage } from "./llmClient";
 
-const SYSTEM_PROMPT = `You are Fizziwig, a helpful and concise coding assistant running locally on the user's machine.
-You can see one or more of the user's files as context. Some large files may be truncated — this will be noted inline.
-When proposing a code change, put the full revised code in a single fenced code block
-with the language tag, so it can be applied directly. Keep explanations brief.`;
-
 // ─── Token budget ─────────────────────────────────────────────────────────────
 // Rough estimate: 1 token ≈ 4 characters.
-// Total context: 8192 tokens. We reserve:
-//   ~512  for the system prompt + chat history overhead
-//   ~1024 for the model's response
-// That leaves ~6656 tokens (~26,600 chars) for file content.
+// Total context: read from config at request time.
+// We reserve ~1536 tokens for system prompt + history + response headroom.
 const CHARS_PER_TOKEN = 4;
-const TOTAL_CONTEXT_TOKENS = 8192;
-const RESERVED_TOKENS = 1536; // system prompt + history + response headroom
-const FILE_BUDGET_CHARS =
-  (TOTAL_CONTEXT_TOKENS - RESERVED_TOKENS) * CHARS_PER_TOKEN;
-
-// Active file gets up to 60% of the budget; referenced files share the rest
-const ACTIVE_FILE_MAX_CHARS = Math.floor(FILE_BUDGET_CHARS * 0.6);
-const REFERENCE_BUDGET_CHARS = FILE_BUDGET_CHARS - ACTIVE_FILE_MAX_CHARS;
+const RESERVED_TOKENS = 1536;
+const ACTIVE_FILE_SHARE = 0.6;
 
 export function registerChatParticipant(context: vscode.ExtensionContext) {
   const handler: vscode.ChatRequestHandler = async (
@@ -29,6 +16,13 @@ export function registerChatParticipant(context: vscode.ExtensionContext) {
     stream,
     token
   ) => {
+    // Read context size from config so it stays in sync with llamaServer
+    const config = vscode.workspace.getConfiguration("fizziwig");
+    const contextTokens = config.get<number>("contextSize") ?? 8192;
+    const fileBudgetChars = (contextTokens - RESERVED_TOKENS) * CHARS_PER_TOKEN;
+    const activeFileMaxChars = Math.floor(fileBudgetChars * ACTIVE_FILE_SHARE);
+    const referenceBudgetChars = fileBudgetChars - activeFileMaxChars;
+
     // Collect #file references
     const referencedFiles = await resolveReferencedFiles(request.references);
 
@@ -51,12 +45,12 @@ export function registerChatParticipant(context: vscode.ExtensionContext) {
 
     // Apply token budget limits
     const budgetedActive = activeFile
-      ? applyLimit(activeFile, ACTIVE_FILE_MAX_CHARS)
+      ? applyLimit(activeFile, activeFileMaxChars)
       : undefined;
 
     const budgetedRefs = applyBudgetAcrossFiles(
       referencedFiles,
-      REFERENCE_BUDGET_CHARS
+      referenceBudgetChars
     );
 
     const allFiles = [
@@ -64,14 +58,23 @@ export function registerChatParticipant(context: vscode.ExtensionContext) {
       ...budgetedRefs,
     ];
 
-    const fileContext =
+    // Build a single system message — Gemma handles one system message
+    // much more reliably than two separate ones
+    const fileSection =
       allFiles.length > 0
-        ? allFiles.map(formatFile).join("\n\n")
-        : "No files are currently open.";
+        ? `The following files are provided as context:\n\n${allFiles.map(formatFile).join("\n\n")}`
+        : "No files are currently open in the editor.";
+
+    const systemContent = `You are Fizziwig, a helpful and concise coding assistant running locally.
+DO NOT ask the user to paste or provide code. File context is injected automatically below.
+If no files are shown, tell the user to open a file or use #file to attach one.
+Some large files may be truncated — this will be noted inline.
+When proposing a code change, put the full revised code in a single fenced code block with the language tag. Keep explanations brief.
+
+${fileSection}`;
 
     const messages: ChatMessage[] = [
-      { role: "system", content: SYSTEM_PROMPT },
-      { role: "system", content: fileContext },
+      { role: "system", content: systemContent },
     ];
 
     // Include prior turns for continuity
@@ -155,9 +158,6 @@ function applyBudgetAcrossFiles(
 ): ContextFile[] {
   if (files.length === 0) return [];
 
-  // Give each file an equal share of the remaining budget.
-  // If a file is smaller than its share, the unused space is
-  // redistributed to the remaining files.
   let remaining = totalBudget;
   const result: ContextFile[] = [];
 
