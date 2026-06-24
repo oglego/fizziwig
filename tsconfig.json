@@ -3,13 +3,12 @@
     "module": "commonjs",
     "target": "ES2022",
     "outDir": "out",
-    "lib": ["ES2022", "DOM"],
+    "lib": ["ES2022"],
     "sourceMap": true,
     "rootDir": "src",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", ".vscode-test", "llama.cpp", "**/build/**"]
+  "exclude": ["node_modules", ".vscode-test"]
 }

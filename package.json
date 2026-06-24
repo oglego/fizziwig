@@ -1,7 +1,7 @@
 {
   "name": "fizziwig",
   "displayName": "Fizziwig",
-  "description": "A free, open-source, local-first AI coding assistant powered by llama.cpp",
+  "description": "Fizziwig — a free, open-source, local-first AI coding assistant powered by llama.cpp",
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.90.0"
@@ -23,22 +23,54 @@
     ],
     "commands": [
       {
-        "command": "fizziwig.applyLastEdit",
-        "title": "Fizziwig: Apply Last Suggested Edit"
+        "command": "fizziwig.showDiff",
+        "title": "Fizziwig: Show Suggested Changes"
+      },
+      {
+        "command": "fizziwig.acceptSuggestion",
+        "title": "Fizziwig: Accept Suggestion"
+      },
+      {
+        "command": "fizziwig.restartServer",
+        "title": "Fizziwig: Restart Server"
+      },
+      {
+        "command": "fizziwig.showServerOutput",
+        "title": "Fizziwig: Show Server Logs"
       }
     ],
     "configuration": {
       "title": "Fizziwig",
       "properties": {
+        "fizziwig.modelPath": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to your GGUF model file. If empty, you will be prompted on first launch."
+        },
+        "fizziwig.serverPort": {
+          "type": "number",
+          "default": 8080,
+          "description": "Port for the local llama-server process."
+        },
+        "fizziwig.contextSize": {
+          "type": "number",
+          "default": 8192,
+          "description": "Context window size in tokens. Reduce if you have limited RAM."
+        },
         "fizziwig.serverUrl": {
           "type": "string",
           "default": "http://localhost:8080/v1/chat/completions",
-          "description": "URL of your local llama-server (OpenAI-compatible) endpoint."
+          "description": "Override the server URL (useful if you want to point at an external server instead of the bundled one)."
         },
         "fizziwig.modelName": {
           "type": "string",
-          "default": "gemma-4b",
-          "description": "Model name to send in API requests (informational for most local servers)."
+          "default": "fizziwig-model",
+          "description": "Model name sent in API requests (informational for most local servers)."
+        },
+        "fizziwig.binaryPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional absolute path to an external llama-server binary to use instead of the bundled one."
         }
       }
     }

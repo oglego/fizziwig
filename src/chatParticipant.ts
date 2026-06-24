@@ -14,9 +14,29 @@ export function registerChatParticipant(context: vscode.ExtensionContext) {
     token
   ) => {
     const editor = vscode.window.activeTextEditor;
-    const fileContext = editor
-      ? `Current file: ${editor.document.fileName}\n\`\`\`${editor.document.languageId}\n${editor.document.getText()}\n\`\`\``
-      : "No file is currently open.";
+    let fileContext = "No file is currently open.";
+    if (editor) {
+      const fileName = editor.document.fileName;
+      const lang = editor.document.languageId;
+      const fullText = editor.document.getText();
+
+      // Truncate large files to avoid blowing past model context windows.
+      const cfg = vscode.workspace.getConfiguration("fizziwig");
+      const contextTokens = cfg.get<number>("contextSize") ?? 8192;
+      const approxCharsPerToken = 4; // conservative chars->token estimate
+      const maxChars = Math.min(200_000, Math.max(2_000, contextTokens * approxCharsPerToken));
+
+      let excerpt = fullText;
+      let truncatedNote = "";
+      if (fullText.length > maxChars) {
+        // Keep the tail of the file which is often most relevant (recent edits)
+        excerpt = fullText.slice(fullText.length - maxChars);
+        const removed = fullText.length - excerpt.length;
+        truncatedNote = `\n\n[Truncated ${removed} characters from start of file to fit model context]`;
+      }
+
+      fileContext = `Current file: ${fileName}\n\`\`\`${lang}\n${excerpt}\n\`\`\`` + truncatedNote;
+    }
 
     const messages: ChatMessage[] = [
       { role: "system", content: SYSTEM_PROMPT },
@@ -62,10 +82,7 @@ export function registerChatParticipant(context: vscode.ExtensionContext) {
     }
   };
 
-  const participant = vscode.chat.createChatParticipant(
-    "fizziwig.chat",
-    handler
-  );
+  const participant = vscode.chat.createChatParticipant("fizziwig.chat", handler);
   context.subscriptions.push(participant);
 }
 
