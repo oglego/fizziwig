@@ -91,6 +91,7 @@ export async function startServer(
       outputChannel.show();
     })
   );
+  
   // Read configuration (modelPath and optional binaryPath)
   const config = vscode.workspace.getConfiguration("fizziwig");
   let modelPath = config.get<string>("modelPath");
@@ -125,12 +126,14 @@ export async function startServer(
         await vscode.workspace
           .getConfiguration("fizziwig")
           .update("binaryPath", picked, vscode.ConfigurationTarget.Global);
+        
+        // If modelPath is still missing, prompt for it
         if (!modelPath || !fs.existsSync(modelPath)) {
           modelPath = await promptForModel();
         }
+        
         if (modelPath) await launchServer(context.extensionPath, modelPath, picked);
       }
-
       return;
     }
 
@@ -171,10 +174,12 @@ async function launchServer(
   const binaryPath = overrideBinaryPath ?? getBinaryPath(extensionPath);
 
   setStatus("loading");
-  // Ensure we have an output channel when launching (restart may call this)
-    if (!outputChannel) {
-      outputChannel = vscode.window.createOutputChannel("Fizziwig");
+  
+  // Ensure we have an output channel when launching
+  if (!outputChannel) {
+    outputChannel = vscode.window.createOutputChannel("Fizziwig");
   }
+  
   outputChannel.appendLine(`[fizziwig] Starting llama-server...`);
   outputChannel.appendLine(`  binary:  ${binaryPath}`);
   outputChannel.appendLine(`  model:   ${modelPath}`);
@@ -215,8 +220,8 @@ async function launchServer(
             const text = data.toString();
             outputChannel.append(text);
 
-            // mark ready when server starts listening (be permissive)
-            if (!ready && text.toLowerCase().includes("listening")) {
+            // Improved readiness check: Look for a specific success message
+            if (!ready && text.includes("listening")) {
               ready = true;
               clearTimeout(timer);
               setStatus("ready");
@@ -290,6 +295,8 @@ export function registerRestartCommand(
         stopServer();
         const config = vscode.workspace.getConfiguration("fizziwig");
         const modelPath = config.get<string>("modelPath");
+        
+        // If modelPath exists, restart with it. Otherwise, try starting fresh.
         if (modelPath) {
           await launchServer(context.extensionPath, modelPath);
         } else {
