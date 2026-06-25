@@ -11,8 +11,9 @@ Key points:
 - Local-first: talk to models running on your computer (no cloud required).
 - Lightweight: integrates with the VS Code Chat Participant API to surface
   a `@fizziwig` participant in the Chat view.
-- Context-aware: the extension sends the currently active file as context so
-  the model can reason about your code.
+- Context-aware: the extension sends the currently active file as context and
+  can expand folder references into relevant files and chunks for project-wide
+  questions.
 - Streaming output: model responses stream back into the chat in real time,
   recreating the feel of an interactive assistant.
 - Apply code: if a response contains a code block, you can apply it to the
@@ -41,8 +42,8 @@ pleasant.
    chat completions endpoint (e.g. `http://localhost:8080/v1/chat/completions`).
 2. The extension registers a Chat Participant (`@fizziwig`) using VS Code's
    Chat Participant API. When you mention `@fizziwig` in the Chat panel, the
-   extension forwards the conversation (plus the active file contents) to the
-   configured server.
+   extension forwards the conversation plus the most relevant local context to
+   the configured server.
 3. The model's response is streamed back into the Chat view; if it emits a
    code block, a command is available to replace the active file with that
    code. The extension prompts for confirmation before making any changes.
@@ -102,8 +103,10 @@ same API surface (for example, Ollama at `http://localhost:11434/v1/chat/complet
 ## Usage details
 
 - Mention `@fizziwig` in the Chat panel to route a message to the local model.
-- The extension sends the active file's text as context with each message —
-  this keeps the model focused on the code you are looking at.
+- The extension sends the active file's text as context with each message.
+- Attach a folder to the prompt when you want Fizziwig to inspect a whole
+  project. Large files are chunked automatically and only the most relevant
+  slices are sent.
 - Responses stream as they arrive so you can watch the model compose its
   answer in real time.
 - When a response contains a fenced code block, a command is exposed to
@@ -130,8 +133,6 @@ vsce package
 
 ## Roadmap / Possible improvements
 
-- Codebase indexing + retrieval: embed files and retrieve only the most
-  relevant chunks instead of sending the entire active file.
 - Diff-based edits: show a diff and apply only the minimal changes.
 - Multi-file editing and worktree-aware changes.
 - Inline ghost-text completions using `InlineCompletionItemProvider`.
@@ -139,8 +140,8 @@ vsce package
 
 ## Known limitations (MVP)
 
-- Only the active file is sent as context — large files consume model
-  context quickly.
 - "Apply edit" currently replaces the full file rather than applying a
   minimal patch.
+- Retrieval is heuristic rather than embedding-based, so some broad project
+  questions may still need a follow-up prompt.
 - Chat history does not persist across VS Code restarts in this MVP.
