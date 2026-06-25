@@ -8,7 +8,11 @@
   },
   "categories": ["Other"],
   "activationEvents": [
-    "onStartupFinished"
+    "onChatParticipant:fizziwig.chat",
+    "onCommand:fizziwig.showDiff",
+    "onCommand:fizziwig.acceptSuggestion",
+    "onCommand:fizziwig.restartServer",
+    "onCommand:fizziwig.showServerOutput"
   ],
   "main": "./out/extension.js",
   "contributes": {

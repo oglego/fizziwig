@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { streamChatCompletion, ChatMessage } from "./llmClient";
+import { ensureServerStarted } from "./server/llamaServer";
 
 // ─── Token budget ─────────────────────────────────────────────────────────────
 // Rough estimate: 1 token ≈ 4 characters.
@@ -8,6 +9,7 @@ import { streamChatCompletion, ChatMessage } from "./llmClient";
 const CHARS_PER_TOKEN = 4;
 const RESERVED_TOKENS = 1536;
 const ACTIVE_FILE_SHARE = 0.6;
+const MAX_HISTORY_TURNS = 8;
 
 export function registerChatParticipant(context: vscode.ExtensionContext) {
   const handler: vscode.ChatRequestHandler = async (
@@ -19,12 +21,18 @@ export function registerChatParticipant(context: vscode.ExtensionContext) {
     // Read context size from config so it stays in sync with llamaServer
     const config = vscode.workspace.getConfiguration("fizziwig");
     const contextTokens = config.get<number>("contextSize") ?? 8192;
-    const fileBudgetChars = (contextTokens - RESERVED_TOKENS) * CHARS_PER_TOKEN;
+    const fileBudgetChars = Math.max(
+      0,
+      (contextTokens - RESERVED_TOKENS) * CHARS_PER_TOKEN
+    );
     const activeFileMaxChars = Math.floor(fileBudgetChars * ACTIVE_FILE_SHARE);
     const referenceBudgetChars = fileBudgetChars - activeFileMaxChars;
 
-    // Collect #file references
-    const referencedFiles = await resolveReferencedFiles(request.references);
+    // Start the server and collect file references in parallel.
+    const serverReady = ensureServerStarted(context);
+    const referencedFilesPromise = resolveReferencedFiles(request.references);
+    const referencedFiles = await referencedFilesPromise;
+    await serverReady;
 
     // Always include the active file if not already referenced
     const editor = vscode.window.activeTextEditor;
@@ -77,8 +85,9 @@ ${fileSection}`;
       { role: "system", content: systemContent },
     ];
 
-    // Include prior turns for continuity
-    for (const turn of chatContext.history) {
+    // Include only the most recent turns; the active file carries most of the
+    // useful state, and capping history keeps prompts smaller and faster.
+    for (const turn of chatContext.history.slice(-MAX_HISTORY_TURNS)) {
       if (turn instanceof vscode.ChatRequestTurn) {
         messages.push({ role: "user", content: turn.prompt });
       } else if (turn instanceof vscode.ChatResponseTurn) {
@@ -175,32 +184,33 @@ function applyBudgetAcrossFiles(
 async function resolveReferencedFiles(
   references: readonly vscode.ChatPromptReference[]
 ): Promise<ContextFile[]> {
-  const files: ContextFile[] = [];
+  const files = await Promise.all(
+    references.map(async (ref) => {
+      let uri: vscode.Uri | undefined;
 
-  for (const ref of references) {
-    let uri: vscode.Uri | undefined;
+      if (ref.value instanceof vscode.Uri) {
+        uri = ref.value;
+      } else if (ref.value instanceof vscode.Location) {
+        uri = ref.value.uri;
+      }
 
-    if (ref.value instanceof vscode.Uri) {
-      uri = ref.value;
-    } else if (ref.value instanceof vscode.Location) {
-      uri = ref.value.uri;
-    }
+      if (!uri) return undefined;
 
-    if (!uri) continue;
+      try {
+        const doc = await vscode.workspace.openTextDocument(uri);
+        return {
+          path: uri.fsPath,
+          languageId: doc.languageId,
+          content: doc.getText(),
+        };
+      } catch {
+        // file couldn't be read — skip silently
+        return undefined;
+      }
+    })
+  );
 
-    try {
-      const doc = await vscode.workspace.openTextDocument(uri);
-      files.push({
-        path: uri.fsPath,
-        languageId: doc.languageId,
-        content: doc.getText(),
-      });
-    } catch {
-      // file couldn't be read — skip silently
-    }
-  }
-
-  return files;
+  return files.filter((file): file is ContextFile => file !== undefined);
 }
 
 // ─── Formatting ───────────────────────────────────────────────────────────────

@@ -4,8 +4,12 @@ import * as path from "path";
 import * as fs from "fs";
 
 let serverProcess: cp.ChildProcess | undefined;
+let startupPromise: Promise<void> | undefined;
 let statusBarItem: vscode.StatusBarItem;
 let outputChannel: vscode.OutputChannel;
+
+const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "::1"]);
+const DEFAULT_SERVER_URL = "http://localhost:8080/v1/chat/completions";
 
 // ─── Status Bar ──────────────────────────────────────────────────────────────
 
@@ -77,11 +81,11 @@ async function promptForModel(): Promise<string | undefined> {
   return modelPath;
 }
 
-// ─── Start ───────────────────────────────────────────────────────────────────
+// ─── Initialization ──────────────────────────────────────────────────────────
 
-export async function startServer(
+export function initializeServer(
   context: vscode.ExtensionContext
-): Promise<void> {
+): void {
   outputChannel = vscode.window.createOutputChannel("Fizziwig");
   context.subscriptions.push(outputChannel);
 
@@ -91,87 +95,50 @@ export async function startServer(
       outputChannel.show();
     })
   );
-  
-  // Read configuration (modelPath and optional binaryPath)
+  setStatus("stopped");
+}
+
+export async function ensureServerStarted(
+  context: vscode.ExtensionContext
+): Promise<void> {
   const config = vscode.workspace.getConfiguration("fizziwig");
-  let modelPath = config.get<string>("modelPath");
+  const serverUrl = config.get<string>("serverUrl") ?? DEFAULT_SERVER_URL;
 
-  // Resolve binary: prefer user-configured path, fall back to bundled binary
-  const configuredBinary = config.get<string>("binaryPath");
-  const configuredBinaryExists = configuredBinary && fs.existsSync(configuredBinary);
-  const hasBundled = binaryExists(context.extensionPath);
-
-  if (!configuredBinaryExists && !hasBundled) {
-    setStatus("error", "No llama-server binary found for this platform.");
-    const choice = await vscode.window.showErrorMessage(
-      `Fizziwig: no bundled llama-server binary found for ${process.platform}-${process.arch}.`,
-      "Use External Server",
-      "Select Binary",
-      "View Logs"
-    );
-
-    if (choice === "Use External Server") {
-      setStatus("ready");
-      return;
+  if (!shouldManageLocalServer(serverUrl)) {
+    if (serverProcess) {
+      stopServer();
     }
-
-    if (choice === "Select Binary") {
-      const result = await vscode.window.showOpenDialog({
-        canSelectFiles: true,
-        canSelectFolders: false,
-        title: "Select your llama-server binary",
-      });
-      if (result?.[0]) {
-        const picked = result[0].fsPath;
-        await vscode.workspace
-          .getConfiguration("fizziwig")
-          .update("binaryPath", picked, vscode.ConfigurationTarget.Global);
-        
-        // If modelPath is still missing, prompt for it
-        if (!modelPath || !fs.existsSync(modelPath)) {
-          modelPath = await promptForModel();
-        }
-        
-        if (modelPath) await launchServer(context.extensionPath, modelPath, picked);
-      }
-      return;
-    }
-
-    // View Logs or dismissed
-    outputChannel.show();
+    setStatus("ready");
     return;
   }
 
-  // Get or prompt for model path
-  if (!modelPath || !fs.existsSync(modelPath)) {
-    outputChannel.appendLine(
-      modelPath
-        ? `Model file not found at: ${modelPath} — prompting for new path.`
-        : "No model configured — prompting user."
-    );
-    modelPath = await promptForModel();
-  }
-
-  if (!modelPath) {
-    setStatus("stopped");
-    vscode.window.showWarningMessage(
-      "Fizziwig: no model selected. Extension will not start."
-    );
+  if (serverProcess?.exitCode === null) {
     return;
   }
 
-  await launchServer(context.extensionPath, modelPath, configuredBinaryExists ? configuredBinary : undefined);
+  if (startupPromise) {
+    return startupPromise;
+  }
+
+  startupPromise = launchServer(context.extensionPath).finally(() => {
+    startupPromise = undefined;
+  });
+
+  return startupPromise;
 }
 
 async function launchServer(
   extensionPath: string,
-  modelPath: string,
-  overrideBinaryPath?: string
 ): Promise<void> {
   const config = vscode.workspace.getConfiguration("fizziwig");
   const port = config.get<number>("serverPort") ?? 8080;
   const contextSize = config.get<number>("contextSize") ?? 8192;
-  const binaryPath = overrideBinaryPath ?? getBinaryPath(extensionPath);
+  let modelPath = config.get<string>("modelPath");
+  const configuredBinary = config.get<string>("binaryPath");
+  const configuredBinaryExists =
+    !!configuredBinary && fs.existsSync(configuredBinary);
+  const hasBundled = binaryExists(extensionPath);
+  const binaryPath = configuredBinary ?? getBinaryPath(extensionPath);
 
   setStatus("loading");
   
@@ -182,11 +149,71 @@ async function launchServer(
   
   outputChannel.appendLine(`[fizziwig] Starting llama-server...`);
   outputChannel.appendLine(`  binary:  ${binaryPath}`);
-  outputChannel.appendLine(`  model:   ${modelPath}`);
   outputChannel.appendLine(`  port:    ${port}`);
   outputChannel.appendLine(`  context: ${contextSize}`);
 
   try {
+    if (!configuredBinaryExists && !hasBundled) {
+      setStatus("error", "No llama-server binary found for this platform.");
+      const choice = await vscode.window.showErrorMessage(
+        `Fizziwig: no bundled llama-server binary found for ${process.platform}-${process.arch}.`,
+        "Use External Server",
+        "Select Binary",
+        "View Logs"
+      );
+
+      if (choice === "Use External Server") {
+        setStatus("ready");
+        return;
+      }
+
+      if (choice === "Select Binary") {
+        const result = await vscode.window.showOpenDialog({
+          canSelectFiles: true,
+          canSelectFolders: false,
+          title: "Select your llama-server binary",
+        });
+        if (result?.[0]) {
+          const picked = result[0].fsPath;
+          await vscode.workspace
+            .getConfiguration("fizziwig")
+            .update("binaryPath", picked, vscode.ConfigurationTarget.Global);
+
+          if (!modelPath || !fs.existsSync(modelPath)) {
+            modelPath = await promptForModel();
+          }
+
+          if (modelPath) {
+            await launchServer(extensionPath);
+          }
+        }
+        return;
+      }
+
+      outputChannel.show();
+      return;
+    }
+
+    if (!modelPath || !fs.existsSync(modelPath)) {
+      outputChannel.appendLine(
+        modelPath
+          ? `Model file not found at: ${modelPath} — prompting for new path.`
+          : "No model configured — prompting user."
+      );
+      modelPath = await promptForModel();
+    }
+
+    if (!modelPath) {
+      setStatus("stopped");
+      vscode.window.showWarningMessage(
+        "Fizziwig: no model selected. Extension will not start."
+      );
+      return;
+    }
+
+    const resolvedModelPath = modelPath;
+    outputChannel.appendLine(`  model:   ${modelPath}`);
+
     await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
@@ -196,27 +223,29 @@ async function launchServer(
       () =>
         new Promise<void>((resolve, reject) => {
           let ready = false;
-          serverProcess = cp.spawn(binaryPath, [
+          const child: cp.ChildProcess = cp.spawn(binaryPath, [
             "-m",
-            modelPath,
+            resolvedModelPath,
             "-c",
             String(contextSize),
             "--port",
             String(port),
             "--log-disable",
           ]);
+          serverProcess = child;
 
           const timer = setTimeout(() => {
             if (!ready) {
               const err = new Error("Model load timed out after 3 minutes.");
               outputChannel.appendLine(`[fizziwig] ${err.message}`);
               setStatus("error", err.message);
+              serverProcess = undefined;
               reject(err);
             }
           }, 180_000);
 
           // llama-server writes its logs to stderr
-          serverProcess.stderr?.on("data", (data: Buffer) => {
+          child.stderr?.on("data", (data: Buffer) => {
             const text = data.toString();
             outputChannel.append(text);
 
@@ -230,19 +259,22 @@ async function launchServer(
             }
           });
 
-          serverProcess.stdout?.on("data", (data: Buffer) => {
+          child.stdout?.on("data", (data: Buffer) => {
             outputChannel.append(data.toString());
           });
 
-          serverProcess.on("error", (err) => {
+          child.on("error", (err) => {
             clearTimeout(timer);
             setStatus("error", err.message);
             outputChannel.appendLine(`[fizziwig] Process error: ${err.message}`);
+            serverProcess = undefined;
             reject(err);
           });
 
-          serverProcess.on("exit", (code, signal) => {
+          child.on("exit", (code, signal) => {
             clearTimeout(timer);
+            const hadBeenReady = ready;
+            serverProcess = undefined;
             if (!ready) {
               const msg = `Server exited before becoming ready (code ${code}, signal ${signal})`;
               setStatus("error", msg);
@@ -257,7 +289,7 @@ async function launchServer(
               outputChannel.appendLine(
                 `[fizziwig] Server exited unexpectedly (code ${code}, signal ${signal})`
               );
-            } else {
+            } else if (hadBeenReady) {
               setStatus("stopped");
             }
           });
@@ -281,6 +313,7 @@ export function stopServer(): void {
     outputChannel?.appendLine("[fizziwig] Stopping server...");
     serverProcess.kill("SIGTERM");
     serverProcess = undefined;
+    startupPromise = undefined;
     setStatus("stopped");
   }
 }
@@ -293,15 +326,16 @@ export function registerRestartCommand(
     context.subscriptions.push(
       vscode.commands.registerCommand("fizziwig.restartServer", async () => {
         stopServer();
-        const config = vscode.workspace.getConfiguration("fizziwig");
-        const modelPath = config.get<string>("modelPath");
-        
-        // If modelPath exists, restart with it. Otherwise, try starting fresh.
-        if (modelPath) {
-          await launchServer(context.extensionPath, modelPath);
-        } else {
-          await startServer(context);
-        }
+        await ensureServerStarted(context);
       })
     );
+}
+
+function shouldManageLocalServer(serverUrl: string): boolean {
+  try {
+    const parsed = new URL(serverUrl);
+    return LOCAL_HOSTNAMES.has(parsed.hostname);
+  } catch {
+    return true;
+  }
 }

@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import { registerChatParticipant } from "./chatParticipant";
 import { registerApplyEditCommand } from "./applyEdit";
 import {
-  startServer,
+  initializeServer,
   stopServer,
   createStatusBar,
   registerRestartCommand,
@@ -20,9 +20,8 @@ export async function activate(context: vscode.ExtensionContext) {
   registerApplyEditCommand(context);
   registerRestartCommand(context);
 
-  // Start the server — awaited so the status bar reflects loading state
-  // before the user tries to use the chat panel
-  await startServer(context);
+  // Initialize the UI and defer server startup until the user actually needs it.
+  initializeServer(context);
 
   console.log("Fizziwig is active.");
 }
